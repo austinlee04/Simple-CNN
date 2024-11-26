@@ -3,22 +3,47 @@ import pickle
 
 class SimpleCNN:
     def __init__(self, learning_rate, batch_size):
+        # general parameters for learning
         self.lr = learning_rate
         self.batch_size = batch_size
 
+        # parameters for convolutional layer
+        self.input_size = (self.batch_size, 1, 28, 28)
+        self.filter_num = 3
+        self.filter_size = (self.filter_num, 1, 3, 3)
+        self.bias_size = (self.filter_num, 1, 1)
+        self.output_size = (1, 10, 1)
+
         self.filter = 0
+        self.padding = 0
+        self.stride = 1
+
+        # parameters for linear layer
         self.w = 0
         self.b = 0
 
-    def fit(self, X_train, y_train):
-        for i in range(0, X_train.shape[0], self.batch_size):
-            z = self.forward(X_train)
-            self.backpropagation(z)
-
-    def forward(self):
+    def im2col(self, X):
         pass
 
-    def convolution(self):
+    def fit(self, X_train, y_train):
+        for i in range(0, X_train.shape[0], self.batch_size):
+            for j in range(i, i+self.batch_size):
+                z = self.forward(X_train)
+                self.backpropagation(z)
+
+    def forward(self, X):
+        z1 = self.convolution(X)
+        z2 = self.ReLU(z1)
+        z3 = self.max_pooling(z2)
+        z4 = np.dot(z3, self.w) + self.b
+        z5 = self.sigmoid(z4)
+        y = self.softmax(z5)
+        return y
+
+    def convolution(self, X):
+        pass
+
+    def ReLU(self, X):
         pass
 
     def max_pooling(self):
