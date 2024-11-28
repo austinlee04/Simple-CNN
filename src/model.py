@@ -1,99 +1,128 @@
 import numpy as np
 import pickle
 
-class SimpleCNN:
-    def __init__(self, learning_rate, batch_size):
-        # general parameters for learning
-        self.lr = learning_rate
-        self.batch_size = batch_size
 
-        # parameters for convolutional layer
-        self.input_size = (self.batch_size, 1, 28, 28)
-        self.filter_num = 3
-        self.filter_size = (self.filter_num, 1, 3, 3)
-        self.bias_size = (self.filter_num, 1, 1)
-        self.output_size = (1, 10, 1)
+class Convolution:
+    def __init__(self, input_size, filter_size, padding=0, stride=1, activation='ReLU'):
+        self.input_size = input_size
+        self.filter_size = filter_size          # (3,3)
+        self.output_size = 0
 
-        self.filter = 0
-        self.padding = 0
-        self.stride = 1
+        self.padding = padding
+        self.stride = stride
 
-        # parameters for linear layer
-        self.w = 0
-        self.b = 0
+        self.activation = activation
 
-    def im2col(self, X):
-        pass
-
-    def fit(self, X_train, y_train):
-        for i in range(0, X_train.shape[0], self.batch_size):
-            for j in range(i, i+self.batch_size):
-                z = self.forward(X_train)
-                self.backpropagation(z)
-
-    def forward(self, X):
-        z1 = self.convolution(X)
-        z2 = self.ReLU(z1)
-        z3 = self.max_pooling(z2)
-        z4 = np.dot(z3, self.w) + self.b
-        z5 = self.sigmoid(z4)
-        y = self.softmax(z5)
-        return y
-
-    def convolution(self, X):
-        pass
-
-    def ReLU(self, X):
-        pass
-
-    def max_pooling(self):
-        pass
-
-    def sigmoid(self):
-        pass
-
-    def softmax(self):
-        pass
-
-    def predict(self, X):
-        pass
-
-    def backpropagation(self):
-        pass
-
-    def loss(self):
-        # cross entropy loss
-        pass
-
-    def score(self, X, y):
-        pass
-
-    def save_model(self):
-        pass
-'''
-class SimpleCNN:
-    def __init__(self):
+    def im2col(self):
         pass
 
     def convolution(self):
         pass
 
+    def ReLU(self):
+        pass
+
+    def forward(self):
+        pass
+
+    def backward(self):
+        pass
+
+
+class Pooling:
+    def __init__(self, pooling_type="max_pooling"):
+        self.pooling_type = pooling_type
+
     def max_pooling(self):
         pass
 
-class Perceptron:
-    def __init__(self):
+    def avg_pooling(self):
+        pass
+
+    def forward(self):
+        pass
+
+    def backward(self):
+        pass
+
+
+class FullyConnectedLayer:
+    def __init__(self, use_softmax=False):
         self.w = 0
         self.b = 0
+        self.use_softmax = use_softmax
 
+    @staticmethod
+    def sigma(self, X):
+        return np.dot(X, self.w) + self.b
+
+    @staticmethod
     def sigmoid(self, z):
         return 1 / (1 + np.exp(-z))
 
-    def softmax(self, x_i, x):
-        return np.exp(x_i) / sum([np.exp(t) for t in x])
+    @staticmethod
+    def softmax(self, z):
+        Z = sum([np.exp(t) for t in z])
+        return np.exp(z) / Z
 
-    def sigma(self, X):
-        return np.sum(X * self.w) + self.b
+    def forward(self, X):
+        Z1 = self.sigma(X)
+        Z2 = self.sigmoid(Z1)
+        if self.use_softmax:
+            return self.softmax(Z2)
+        else:
+            return Z2
+
+    def backward(self):
+        pass
+
+
+class SimpleCNN:
+    def __init__(self, learning_rate, input_size):
+        self.lr = learning_rate
+        self.layers = []
+        self.input_size = input_size
+
+    def loss(self):
+        # cross-entropy loss
+        pass
+
+    def add_layer(self, model):
+        self.layers.append(model)
+
+    def forward(self, X):
+        if len(self.layers) == 0:
+            print("Error : no layer added to model")
+            return False
+        for layer in self.layers:
+            X = layer.forward(X)
+        return X
+
+    def backward(self, dL_dw):
+        if len(self.layers) == 0:
+            print("Error : no layer added to model")
+            return False
+        for layer in self.layers[::-1]:
+            pass
+
+    def fit(self, X_train, y_train, epochs=500, batch_size=128, early_stopping=False, validation=False):
+        for i in range(0, X_train.shape[0], self.batch_size):
+            for j in range(i, i+self.batch_size):
+                pass
+
+    def predict(self, X):
+        pass
+
+    def score(self, X, y):
+        pass
+
+    def load_model(self):
+        pass
+
+    def save_model(self):
+        pass
+'''
+class Perceptron:
 
     def backdrop(self, y, a, X):
         for i in range(X.shape[0]):
