@@ -1,165 +1,252 @@
 import numpy as np
 import pickle
+from tqdm import tqdm
 
 
 class Convolution:
-    def __init__(self, input_size, filter_size, padding=0, stride=1, activation='ReLU'):
-        self.input_size = input_size
-        self.filter_size = filter_size          # (3,3)
-        self.output_size = 0
+    def __init__(self, filter_shape=(3, 1, 3, 3), padding=0, stride=1, activation=None):
+        self.input_shape = None              # (C, H, W)
+        self.filter_shape = filter_shape     # (FN, C, FH, FW), C=1
+        self.output_shape = None             # (FN, OH, OW)
 
         self.padding = padding
         self.stride = stride
 
+        self.w = None                       # (FN, C, FH, FW)
+        self.b = None                       # (FN, 1, 1)
+
         self.activation = activation
 
-    def im2col(self):
-        pass
+    def set_parameters(self, input_shape, bound):
+        self.input_shape = input_shape
+        self.w = np.random.uniform(-bound, bound, self.filter_shape)
+        self.b = np.random.uniform(-bound, bound, (self.filter_shape[0], 1, 1))
+        self.output_shape = (self.filter_shape[0],
+                             (self.input_shape[1] + 2 * self.padding - self.filter_shape[2]) // self.stride + 1,
+                             (self.input_shape[2] + 2 * self.padding - self.filter_shape[3]) // self.stride + 1)
+        return self.output_shape
 
-    def convolution(self):
-        pass
+    def im2col(self, X):
+        N = X.shape[0]
+        after_padding = np.pad(X, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), 'constant', constant_values=0)
+        col = np.zeros((N, self.input_shape[0], self.filter_shape[2], self.filter_shape[3], self.output_shape[1], self.output_shape[2]))
+        # (N, C, FH, FW, OH, OW)
 
-    def ReLU(self):
-        pass
+        for y in range(self.filter_shape[2]):
+            y_max = y + self.stride * self.output_shape[1]
+            for x in range(self.filter_shape[3]):
+                x_max = x + self.stride * self.output_shape[2]
+                col[:, :, y, x, :, :] = after_padding[:, :, y:y_max:self.stride, x:x_max:self.stride]
 
-    def forward(self):
-        pass
+        col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N * self.output_shape[1] * self.output_shape[2], -1)
 
-    def backward(self):
-        pass
+        return col
+
+    def convolution(self, Z, N):
+        col_filter = self.w.reshape(self.filter_shape[0], -1).T
+        output = np.dot(Z, col_filter).reshape(N, *self.output_shape) + self.b
+        return output.reshape(N, *self.output_shape)
+
+    def ReLU(self, Z):
+        Y = np.vectorize(lambda x: x if x>0 else 0)(Z)
+        return Y
+
+    def forward(self, X):
+        N = X.shape[0]
+
+        Z1 = self.im2col(X)
+        Z2 = self.convolution(Z1, N)
+        if not self.activation:
+            return Z2
+        elif self.activation == "relu":
+            return self.ReLU(Z2)
+
+    def backward(self, Y, lr):
+        return None
 
 
-class Pooling:
-    def __init__(self, pooling_type="max_pooling"):
-        self.pooling_type = pooling_type
+class MaxPooling:
+    def __init__(self, PH=2, PW=2, stride=2, padding=0):
+        self.input_shape = None             # (C, H, W)
+        self.output_shape = None            # (C, OH, OW)
+        self.PH = PH
+        self.PW = PW
+        self.stride = stride
+        self.padding = padding
 
-    def max_pooling(self):
-        pass
+        self.max_arg = None
 
-    def avg_pooling(self):
-        pass
+    def set_parameters(self, input_shape, bound):
+        self.input_shape = input_shape          # (C, H, W)
+        # (FN, OH, OW)
+        self.output_shape = (self.input_shape[0],
+                             int(1 + (self.input_shape[1] - self.PH) / self.stride),
+                             int(1 + (self.input_shape[2] - self.PW) / self.stride))
+        return self.output_shape
 
-    def forward(self):
-        pass
+    def im2col(self, X):
+        N = X.shape[0]
 
-    def backward(self):
-        pass
+        after_padding = np.pad(X, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), 'constant', constant_values=0)
+        col = np.zeros((N, self.input_shape[0], self.PH, self.PW, self.output_shape[1], self.output_shape[2]))      # (N, C, PH, PW, OH, OW)
+
+        for y in range(self.PH):
+            y_max = y + self.stride * self.output_shape[1]
+            for x in range(self.PW):
+                x_max = x + self.stride * self.output_shape[2]
+                col[:, :, y, x, :, :] = after_padding[:, :, y:y_max:self.stride, x:x_max:self.stride]
+        # (N, C, PH, PW, OH, OW) -> (N, OH, OW, C, PH, PW) -> (N*OH*OW, -1)
+        col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N * self.output_shape[1] * self.output_shape[2], -1)
+        return col
+
+    def forward(self, X):
+        N = X.shape[0]
+        col = self.im2col(X).reshape(-1, self.PH * self.PW)
+        out = np.max(col, axis=1).reshape(N, *self.output_shape)
+        self.max_arg = np.argmax(col, axis=1).reshape(N, -1).reshape(N, self.output_shape[0], -1)
+        return out
+
+    def backward(self, grad, lr):
+        # including implementation of column to image
+        N = grad.shape[0]
+        grad = grad.reshape(N, *self.output_shape)
+        im = np.zeros((N, *self.input_shape))
+        col_grad = np.zeros((N, self.output_shape[0], self.output_shape[1]*self.output_shape[2], self.PH * self.PW))
+        for i in range(N):
+            for j in range(self.max_arg.shape[2]):
+                col_grad[i, :, j, self.max_arg[i, :, j]] = 1
+
+        print(grad.shape, self.input_shape, col_grad.shape, im.shape)
+        return None
 
 
 class FullyConnectedLayer:
-    def __init__(self, use_softmax=False):
-        self.w = 0
-        self.b = 0
-        self.use_softmax = use_softmax
+    def __init__(self, activation=None, output_shape=(1, 10)):
+        self.input_shape = None
+        self.output_shape = output_shape
+        self.w = None
+        self.b = None
+        self.activation = activation
+        self.softmax_sum = 1
+        self.X = None
+        self.Z = None
 
-    @staticmethod
+    def set_parameters(self, input_shape, bound):
+        self.input_shape = input_shape
+        self.w = np.random.uniform(-bound, bound, (self.input_shape[1]*self.input_shape[2], self.output_shape[1]))
+        self.b = np.random.uniform(-bound, bound, (1, self.output_shape[1]))
+        return self.output_shape
+
     def sigma(self, X):
         return np.dot(X, self.w) + self.b
 
     @staticmethod
-    def sigmoid(self, z):
+    def sigmoid(z):
         return 1 / (1 + np.exp(-z))
 
-    @staticmethod
     def softmax(self, z):
-        Z = sum([np.exp(t) for t in z])
-        return np.exp(z) / Z
+        self.softmax_sum = np.sum(np.exp(z), axis=1).reshape(z.shape[0], -1)
+        return np.exp(z) / self.softmax_sum
 
     def forward(self, X):
-        Z1 = self.sigma(X)
-        Z2 = self.sigmoid(Z1)
-        if self.use_softmax:
-            return self.softmax(Z2)
-        else:
-            return Z2
+        N = X.shape[0]
+        self.X = X.reshape(N, -1)
+        self.Z = self.sigma(self.X)
+        if not self.activation :
+            return self.Z
+        elif self.activation == 'softmax':
+            return self.softmax(self.Z)
+        elif self.activation == 'sigmoid':
+            return self.sigmoid(self.Z)
 
-    def backward(self):
-        pass
+    def backward(self, Y, lr):
+        if self.activation == 'softmax':
+            dL_dZ = (1/self.softmax_sum) * 1/Y * np.exp(self.Z)
+            dL_dw = np.dot(self.X.T, dL_dZ)
+            dL_dX = np.dot(dL_dZ, self.w.T)
+            self.w -= lr * dL_dw
+            self.b -= lr * np.average(dL_dZ, axis=0)
+            return dL_dX
+        else:   # activation = None
+            pass
 
 
 class SimpleCNN:
-    def __init__(self, learning_rate, input_size):
-        self.lr = learning_rate
+    def __init__(self):
+        self.learning_rate = 1
         self.layers = []
-        self.input_size = input_size
+        self.input_shape = None
+        self.output_shape = None
 
-    def loss(self):
-        # cross-entropy loss
-        pass
+    def add_layers(self, *models):
+        for model in models:
+            self.layers.append(model)
 
-    def add_layer(self, model):
-        self.layers.append(model)
+    def set_parameters(self, input_shape=(1, 28, 28), output_shape=(1, 10)):
+        bound = (6 / (input_shape[0] * input_shape[1] + output_shape[1])) ** 0.5        # Glorot initialization
+        self.input_shape = input_shape
+        self.output_shape = output_shape
+        for layer in self.layers:
+            output_shape = layer.set_parameters(input_shape, bound)
+            input_shape = output_shape
+
+    @staticmethod
+    def cross_entropy_loss(y_pred, y_ans):
+        ce_loss = -1 * np.log(y_ans + 1e-7) * y_pred
+        return ce_loss
 
     def forward(self, X):
+        X = X.reshape(-1, *self.input_shape)
+        N = X.shape[0]
         if len(self.layers) == 0:
             print("Error : no layer added to model")
             return False
         for layer in self.layers:
             X = layer.forward(X)
-        return X
+        return X.reshape(N, -1)
 
-    def backward(self, dL_dw):
-        if len(self.layers) == 0:
-            print("Error : no layer added to model")
-            return False
-        for layer in self.layers[::-1]:
-            pass
+    def backward(self, Y):
+        N = Y.shape[0]
+        grad = np.where(Y == np.max(Y, axis=1, keepdims=True), Y, 0)
+        for i in range(len(self.layers)-1, -1, -1):
+            grad = self.layers[i].backward(grad, self.learning_rate)
 
-    def fit(self, X_train, y_train, epochs=500, batch_size=128, early_stopping=False, validation=False):
-        for i in range(0, X_train.shape[0], self.batch_size):
-            for j in range(i, i+self.batch_size):
-                pass
+    def predict(self, X, one_hot_encoding=True):
+        N = X.shape[0]
+        idx = np.argmax(self.forward(X), axis=1)
+        if one_hot_encoding:
+            pred = np.zeros((N, self.output_shape[1]))
+            for i in range(N):
+                pred[i, idx[i]] = 1
+            return pred
+        return idx
 
-    def predict(self, X):
-        pass
-
-    def score(self, X, y):
-        pass
-
-    def load_model(self):
-        pass
-
-    def save_model(self):
-        pass
-'''
-class Perceptron:
-
-    def backdrop(self, y, a, X):
-        for i in range(X.shape[0]):
-            self.w[i] += (y - a) * X[i]
-        self.b += y - a
-
-    def loss(self):
-        pass
-
-    def fit(self, X, y, epochs=100, batch_size=32):
-        self.w = np.ones(X.shape[0])
-        self.b = 0
-        for i in range(epochs):
+    def fit(self, X_train, y_train, epochs=500, batch_size=64, learning_rate=0.001, validation=False, val_size=0.2, early_stopping=False):
+        self.lr = learning_rate
+        if validation:
+            X_train, X_val, y_train, y_val = \
+                X_train[X_train.shape[0] * val_size:], X_train[:X_train.shape[0] * val_size], \
+                y_train[y_train.shape[0] * val_size:], y_train[:y_train.shape[0] * val_size]
+        for epoch in range(1, epochs+1):
             loss = 0
-            for j in range(X.shape[0]):
-                z = self.sigma(X[i])
-                a = self.sigmoid(z)
-                # update weight and bias
-                self.backdrop(y, a)
-                # a = np.clip(a, 1e-10, 1-1e-10)
-                loss += [self.sigma(x_i) for x_i in X]
-                return np.array(z) > 0
+            for i in tqdm(range(0, X_train.shape[0], batch_size), desc=f"epoch {epoch}/{epochs}"):
+                Y = self.forward(X_train[i:i+batch_size])
+                self.backward(Y)
+                loss += np.sum(self.cross_entropy_loss(Y, y_train[i:i+batch_size]))
+                # print(f"training in process (epoch {epoch}/{epochs}, batch {i//batch_size}/{X_train.shape[0]//batch_size})")
+            print(f"training in process (epoch {epoch}/{epochs}) : loss {loss} | "
+                  f"train score {self.score(X_train[i:i+batch_size], y_train[i:i+batch_size])}", end='')
+            if validation:
+                print(f" | validation score {self.score(X_val, y_val)}", end='')
+            print()
 
-
-    def predict(self, x):
-        a1 = np.dot(x, self.w) + self.b
-        z1 = self.sigmoid(a1)
-        a2 = np.dot(a1, self.w) + self.b
-        z2 = self.sigmoid(a2)
-        a3 = np.dot(a2, self.w) + self.b
-        z3 = self.softmax(a3)
-        return max(z3)
-
-    def accuracy(self, X, y):
-        X_predict = [self.predict(t) for t in X]
-        result = list(map(lambda X_p, y: 1 if X_p==y else 0, X_predict, y))
-        return sum(result) / len(X)
+    def score(self, X, Y):
+        X_predict = self.predict(X)
+        result = 0
+        for pred, ans in zip(X_predict, Y):
+            if np.argmax(pred) == np.argmax(ans):
+                result += 1
+        return result / len(X)
 
     def precision_score(self):
         pass
@@ -169,4 +256,12 @@ class Perceptron:
 
     def confusion_matrix(self):
         pass
-'''
+
+    def roc_auc_score(self):
+        pass
+
+    def load_model(self):
+        pass
+
+    def save_model(self):
+        pass

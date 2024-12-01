@@ -1,15 +1,20 @@
-import numpy as np
-import pickle
+# import numpy as np
+# import pickle
 from data import load_data
-from model import SimpleCNN, Convolution, Pooling
+from model import SimpleCNN, Convolution, MaxPooling, FullyConnectedLayer
 
 X_train, X_test, y_train, y_test = load_data("./dataset")
-print(X_train.shape, y_train.shape, X_test.shape, y_test.shape)
-print(y_train[0])
-
-CNN_model = SimpleCNN(learning_rate=0.01)
-CNN_model.add_layer()
-CNN_model.fit(X_train, y_train)
+batch_size = 32
+CNN_model = SimpleCNN()
+CNN_model.add_layers(Convolution(filter_shape=(1, 1, 3, 3), activation="relu"),
+                     MaxPooling(),
+                     FullyConnectedLayer(activation='softmax'))
+CNN_model.set_parameters()
+CNN_model.fit(X_train[:3], y_train[:3], epochs=1, batch_size=3)
+# print(CNN_model.score(X_train[:20], y_train[:20]))
+'''
+CNN_model.fit(X_train, y_train, batch_size=batch_size)
 print(f"train score : {CNN_model.score(X_train, y_train)}\ntest score : {CNN_model.score(X_test, y_test)}")
 
 CNN_model.save_model()
+'''
