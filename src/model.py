@@ -13,14 +13,14 @@ class Convolution:
         self.stride = stride
 
         self.w = None                       # (FN, C, FH, FW)
-        self.b = None                       # (FN, 1, 1)
 
         self.activation = activation
+
+        self.X = None
 
     def set_parameters(self, input_shape, bound):
         self.input_shape = input_shape
         self.w = np.random.uniform(-bound, bound, self.filter_shape)
-        self.b = np.random.uniform(-bound, bound, (self.filter_shape[0], 1, 1))
         self.output_shape = (self.filter_shape[0],
                              (self.input_shape[1] + 2 * self.padding - self.filter_shape[2]) // self.stride + 1,
                              (self.input_shape[2] + 2 * self.padding - self.filter_shape[3]) // self.stride + 1)
@@ -44,7 +44,7 @@ class Convolution:
 
     def convolution(self, Z, N):
         col_filter = self.w.reshape(self.filter_shape[0], -1).T
-        output = np.dot(Z, col_filter).reshape(N, *self.output_shape) + self.b
+        output = np.dot(Z, col_filter).reshape(N, *self.output_shape)
         return output.reshape(N, *self.output_shape)
 
     def ReLU(self, Z):
@@ -53,26 +53,40 @@ class Convolution:
 
     def forward(self, X):
         N = X.shape[0]
+        self.X = X
 
-        Z1 = self.im2col(X)
+        Z1 = self.im2col(self.X)
         Z2 = self.convolution(Z1, N)
         if not self.activation:
             return Z2
         elif self.activation == "relu":
             return self.ReLU(Z2)
 
-    def backward(self, Y, lr):
-        return None
+    def backward(self, grad, lr):
+        w_update = np.zeros_like(self.w)
+        N = grad.shape[0]
+        dL_dX = np.zeros_like(self.X)
+        for i in range(0, self.output_shape[1]-self.filter_shape[2]+1, self.stride):
+            for j in range(0, self.output_shape[2]-self.filter_shape[3]+1, self.stride):
+                pass
+            # dL_dX +=
+        for i in range(N):
+            for j in range(self.output_shape[1]):
+                for k in range(self.output_shape[2]):
+                    for fn in range(self.filter_shape[0]):
+                        w_update += self.X[i, :, j*self.stride:j*self.stride+self.filter_shape[2],
+                                    k*self.stride:k*self.stride+self.filter_shape[3]] * grad[fn, :, j, k]
+        self.w -= lr * w_update / N
+        return dL_dX
 
 
 class MaxPooling:
-    def __init__(self, PH=2, PW=2, stride=2, padding=0):
+    def __init__(self, PH=2, PW=2, stride=2):
         self.input_shape = None             # (C, H, W)
         self.output_shape = None            # (C, OH, OW)
         self.PH = PH
         self.PW = PW
         self.stride = stride
-        self.padding = padding
 
         self.max_arg = None
 
@@ -87,14 +101,13 @@ class MaxPooling:
     def im2col(self, X):
         N = X.shape[0]
 
-        after_padding = np.pad(X, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), 'constant', constant_values=0)
         col = np.zeros((N, self.input_shape[0], self.PH, self.PW, self.output_shape[1], self.output_shape[2]))      # (N, C, PH, PW, OH, OW)
 
         for y in range(self.PH):
             y_max = y + self.stride * self.output_shape[1]
             for x in range(self.PW):
                 x_max = x + self.stride * self.output_shape[2]
-                col[:, :, y, x, :, :] = after_padding[:, :, y:y_max:self.stride, x:x_max:self.stride]
+                col[:, :, y, x, :, :] = X[:, :, y:y_max:self.stride, x:x_max:self.stride]
         # (N, C, PH, PW, OH, OW) -> (N, OH, OW, C, PH, PW) -> (N*OH*OW, -1)
         col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N * self.output_shape[1] * self.output_shape[2], -1)
         return col
@@ -109,15 +122,19 @@ class MaxPooling:
     def backward(self, grad, lr):
         # including implementation of column to image
         N = grad.shape[0]
-        grad = grad.reshape(N, *self.output_shape)
+        grad = grad.reshape(N, self.output_shape[0], -1)
         im = np.zeros((N, *self.input_shape))
         col_grad = np.zeros((N, self.output_shape[0], self.output_shape[1]*self.output_shape[2], self.PH * self.PW))
         for i in range(N):
             for j in range(self.max_arg.shape[2]):
-                col_grad[i, :, j, self.max_arg[i, :, j]] = 1
-
-        print(grad.shape, self.input_shape, col_grad.shape, im.shape)
-        return None
+                col_grad[i, :, j, self.max_arg[i, :, j]] = grad[i, :, j]
+        col_grad = col_grad.reshape(N, self.output_shape[0], self.output_shape[1]*self.output_shape[2], self.PH, self.PW)
+        idx = 0
+        for i in range(0, self.input_shape[1], self.PH):
+            for j in range(0, self.input_shape[2], self.PW):
+                im[:, :, i:i+self.PH, j:j+self.PW] = col_grad[:, :, idx]
+                idx += 1
+        return im
 
 
 class FullyConnectedLayer:
@@ -146,7 +163,7 @@ class FullyConnectedLayer:
 
     def softmax(self, z):
         self.softmax_sum = np.sum(np.exp(z), axis=1).reshape(z.shape[0], -1)
-        return np.exp(z) / self.softmax_sum
+        return np.exp(z) / (self.softmax_sum + 1e-7)
 
     def forward(self, X):
         N = X.shape[0]
@@ -161,7 +178,7 @@ class FullyConnectedLayer:
 
     def backward(self, Y, lr):
         if self.activation == 'softmax':
-            dL_dZ = (1/self.softmax_sum) * 1/Y * np.exp(self.Z)
+            dL_dZ = (1/self.softmax_sum) * 1/(Y+1e-7) * np.exp(self.Z)
             dL_dw = np.dot(self.X.T, dL_dZ)
             dL_dX = np.dot(dL_dZ, self.w.T)
             self.w -= lr * dL_dw

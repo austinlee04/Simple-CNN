@@ -10,7 +10,7 @@ CNN_model.add_layers(Convolution(filter_shape=(1, 1, 3, 3), activation="relu"),
                      MaxPooling(),
                      FullyConnectedLayer(activation='softmax'))
 CNN_model.set_parameters()
-CNN_model.fit(X_train[:3], y_train[:3], epochs=1, batch_size=3)
+CNN_model.fit(X_train[:10000], y_train[:10000], epochs=100, batch_size=512, learning_rate=0.001)
 # print(CNN_model.score(X_train[:20], y_train[:20]))
 '''
 CNN_model.fit(X_train, y_train, batch_size=batch_size)
