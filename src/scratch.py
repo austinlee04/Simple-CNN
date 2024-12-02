@@ -1,4 +1,4 @@
 import numpy as np
 
-arr = np.arange(1,10)
-print(1/arr)
+arr = np.array([[1,2],[3,4]])
+print(np.sum(arr, axis=0))

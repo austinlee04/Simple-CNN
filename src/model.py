@@ -45,16 +45,14 @@ class Convolution:
     def convolution(self, Z, N):
         col_filter = self.w.reshape(self.filter_shape[0], -1).T
         output = np.dot(Z, col_filter).reshape(N, *self.output_shape)
-        return output.reshape(N, *self.output_shape)
+        return output
 
     def ReLU(self, Z):
-        Y = np.vectorize(lambda x: x if x>0 else 0)(Z)
-        return Y
+        return np.maximum(0, Z)
 
     def forward(self, X):
         N = X.shape[0]
         self.X = X
-
         Z1 = self.im2col(self.X)
         Z2 = self.convolution(Z1, N)
         if not self.activation:
@@ -162,8 +160,9 @@ class FullyConnectedLayer:
         return 1 / (1 + np.exp(-z))
 
     def softmax(self, z):
-        self.softmax_sum = np.sum(np.exp(z), axis=1).reshape(z.shape[0], -1)
-        return np.exp(z) / (self.softmax_sum + 1e-7)
+        z_normalized = z - np.max(z, axis=1, keepdims=True)
+        self.softmax_sum = np.sum(np.exp(z_normalized), axis=1)
+        return np.exp(z_normalized) / self.softmax_sum[:, np.newaxis]
 
     def forward(self, X):
         N = X.shape[0]
@@ -176,14 +175,17 @@ class FullyConnectedLayer:
         elif self.activation == 'sigmoid':
             return self.sigmoid(self.Z)
 
-    def backward(self, Y, lr):
+    def backward(self, grad, lr):
         if self.activation == 'softmax':
-            dL_dZ = (1/self.softmax_sum) * 1/(Y+1e-7) * np.exp(self.Z)
+            self.Z -= np.max(self.Z, axis=1, keepdims=True)
+            dL_dZ = np.exp(self.Z) * grad * (1/self.softmax_sum)[:, np.newaxis]
             dL_dw = np.dot(self.X.T, dL_dZ)
             dL_dX = np.dot(dL_dZ, self.w.T)
             self.w -= lr * dL_dw
             self.b -= lr * np.average(dL_dZ, axis=0)
             return dL_dX
+        elif self.activation == 'sigmoid':
+            pass
         else:   # activation = None
             pass
 
@@ -209,8 +211,8 @@ class SimpleCNN:
 
     @staticmethod
     def cross_entropy_loss(y_pred, y_ans):
-        ce_loss = -1 * np.log(y_ans + 1e-7) * y_pred
-        return ce_loss
+        ce_loss = -1 * np.log(y_pred + 1e-7) * y_ans
+        return np.sum(ce_loss)
 
     def forward(self, X):
         X = X.reshape(-1, *self.input_shape)
@@ -222,9 +224,9 @@ class SimpleCNN:
             X = layer.forward(X)
         return X.reshape(N, -1)
 
-    def backward(self, Y):
-        N = Y.shape[0]
-        grad = np.where(Y == np.max(Y, axis=1, keepdims=True), Y, 0)
+    def backward(self, Y_pred, Y_ans):
+        N = Y_pred.shape[0]
+        grad = -1 * Y_ans / (Y_pred+1e-7)
         for i in range(len(self.layers)-1, -1, -1):
             grad = self.layers[i].backward(grad, self.learning_rate)
 
@@ -239,7 +241,7 @@ class SimpleCNN:
         return idx
 
     def fit(self, X_train, y_train, epochs=500, batch_size=64, learning_rate=0.001, validation=False, val_size=0.2, early_stopping=False):
-        self.lr = learning_rate
+        self.learning_rate = learning_rate
         if validation:
             X_train, X_val, y_train, y_val = \
                 X_train[X_train.shape[0] * val_size:], X_train[:X_train.shape[0] * val_size], \
@@ -248,11 +250,11 @@ class SimpleCNN:
             loss = 0
             for i in tqdm(range(0, X_train.shape[0], batch_size), desc=f"epoch {epoch}/{epochs}"):
                 Y = self.forward(X_train[i:i+batch_size])
-                self.backward(Y)
-                loss += np.sum(self.cross_entropy_loss(Y, y_train[i:i+batch_size]))
+                loss += np.sum(self.cross_entropy_loss(Y, y_train[i:i + batch_size]))
+                self.backward(Y, y_train[i:i+batch_size])
                 # print(f"training in process (epoch {epoch}/{epochs}, batch {i//batch_size}/{X_train.shape[0]//batch_size})")
-            print(f"training in process (epoch {epoch}/{epochs}) : loss {loss} | "
-                  f"train score {self.score(X_train[i:i+batch_size], y_train[i:i+batch_size])}", end='')
+            print(f"\ntraining in process (epoch {epoch}/{epochs}) : loss {loss} | "
+                  f"train score {self.score(X_train, y_train)}", end='')
             if validation:
                 print(f" | validation score {self.score(X_val, y_val)}", end='')
             print()
