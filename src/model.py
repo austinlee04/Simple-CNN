@@ -6,45 +6,62 @@ from tqdm import tqdm
 class Convolution:
     def __init__(self, filter_shape=(3, 1, 3, 3), padding=0, stride=1, activation=None):
         self.input_shape = None              # (C, H, W)
-        self.filter_shape = filter_shape     # (FN, C, FH, FW), C=1
+        self.filter_shape = filter_shape     # (FN, C, FH, FW)
         self.output_shape = None             # (FN, OH, OW)
 
         self.padding = padding
         self.stride = stride
 
         self.w = None                       # (FN, C, FH, FW)
+        self.X = None
+        self.col = None
+        self.col_w = None
 
         self.activation = activation
 
-        self.X = None
-
-    def set_parameters(self, input_shape, bound):
+    def set_parameters(self, input_shape):
         self.input_shape = input_shape
-        self.w = np.random.uniform(-bound, bound, self.filter_shape)
-        self.output_shape = (self.filter_shape[0],
-                             (self.input_shape[1] + 2 * self.padding - self.filter_shape[2]) // self.stride + 1,
-                             (self.input_shape[2] + 2 * self.padding - self.filter_shape[3]) // self.stride + 1)
+        C, H, W = input_shape
+        FN, _, FH, FW = self.filter_shape
+        self.output_shape = (FN, (H+2*self.padding-FW) // self.stride+1, (W+2*self.padding-FW) // self.stride+1)
+        self.w = np.random.normal(loc=0, scale=2/(np.prod(self.input_shape)**0.5), size=(FN, C, FH, FW))
         return self.output_shape
 
     def im2col(self, X):
-        N = X.shape[0]
+        N, C, H, W = X.shape
+        FN, _, FH, FW = self.filter_shape
+        OH, OW = self.output_shape[1:]
         after_padding = np.pad(X, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), 'constant', constant_values=0)
-        col = np.zeros((N, self.input_shape[0], self.filter_shape[2], self.filter_shape[3], self.output_shape[1], self.output_shape[2]))
+        col = np.zeros((N, C, FH, FW, OH, OW))
         # (N, C, FH, FW, OH, OW)
 
-        for y in range(self.filter_shape[2]):
-            y_max = y + self.stride * self.output_shape[1]
-            for x in range(self.filter_shape[3]):
-                x_max = x + self.stride * self.output_shape[2]
+        for y in range(FH):
+            y_max = y + self.stride * OH
+            for x in range(FW):
+                x_max = x + self.stride * OW
                 col[:, :, y, x, :, :] = after_padding[:, :, y:y_max:self.stride, x:x_max:self.stride]
 
-        col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N * self.output_shape[1] * self.output_shape[2], -1)
-
+        col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N * OH * OW, -1)
         return col
 
+    def col2im(self, col):
+        N, C, H, W = self.X.shape
+        FN, _, FH, FW = self.filter_shape
+        OH, OW = self.output_shape[1:]
+        col = col.reshape(N, OH, OW, C, FH, FW).transpose(0, 3, 4, 5, 1, 2)
+
+        im = np.zeros((N, C, H+2*self.padding+self.stride-1, W+2*self.padding+self.stride-1))
+        for y in range(FH):
+            y_max = y + self.stride * OH
+            for x in range(FW):
+                x_max = x + self.stride * OW
+                im[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
+
+        return im[:, :, self.padding:H+self.padding, self.padding:W+self.padding]
+
     def convolution(self, Z, N):
-        col_filter = self.w.reshape(self.filter_shape[0], -1).T
-        output = np.dot(Z, col_filter).reshape(N, *self.output_shape)
+        self.col_w = self.w.reshape(self.filter_shape[0], -1).T
+        output = np.dot(Z, self.col_w).reshape(N, *self.output_shape)
         return output
 
     def ReLU(self, Z):
@@ -53,29 +70,26 @@ class Convolution:
     def forward(self, X):
         N = X.shape[0]
         self.X = X
-        Z1 = self.im2col(self.X)
-        Z2 = self.convolution(Z1, N)
+        self.col = self.im2col(self.X)
+        Z = self.convolution(self.col, N)
         if not self.activation:
-            return Z2
+            return Z
         elif self.activation == "relu":
-            return self.ReLU(Z2)
+            return self.ReLU(Z)
 
     def backward(self, grad, lr):
-        w_update = np.zeros_like(self.w)
+        FN, C, FH, FW = self.filter_shape
         N = grad.shape[0]
-        dL_dX = np.zeros_like(self.X)
-        for i in range(0, self.output_shape[1]-self.filter_shape[2]+1, self.stride):
-            for j in range(0, self.output_shape[2]-self.filter_shape[3]+1, self.stride):
-                pass
-            # dL_dX +=
-        for i in range(N):
-            for j in range(self.output_shape[1]):
-                for k in range(self.output_shape[2]):
-                    for fn in range(self.filter_shape[0]):
-                        w_update += self.X[i, :, j*self.stride:j*self.stride+self.filter_shape[2],
-                                    k*self.stride:k*self.stride+self.filter_shape[3]] * grad[fn, :, j, k]
-        self.w -= lr * w_update / N
-        return dL_dX
+        grad = grad.transpose(0, 2, 3, 1).reshape(-1, FN)
+
+        dw = np.dot(self.col.T, grad)
+        dw = dw.transpose(1, 0).reshape(FN, C, FH, FW)
+        self.w -= lr * dw / N
+
+        dcol = np.dot(grad, self.col_w.T)
+        dx = self.col2im(dcol)
+
+        return dx
 
 
 class MaxPooling:
@@ -88,12 +102,11 @@ class MaxPooling:
 
         self.max_arg = None
 
-    def set_parameters(self, input_shape, bound):
+    def set_parameters(self, input_shape):
         self.input_shape = input_shape          # (C, H, W)
+        C, H, W = input_shape
         # (FN, OH, OW)
-        self.output_shape = (self.input_shape[0],
-                             int(1 + (self.input_shape[1] - self.PH) / self.stride),
-                             int(1 + (self.input_shape[2] - self.PW) / self.stride))
+        self.output_shape = (C, (H-self.PH)//self.stride+1, (W-self.PW)//self.stride+1)
         return self.output_shape
 
     def im2col(self, X):
@@ -110,6 +123,22 @@ class MaxPooling:
         col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N * self.output_shape[1] * self.output_shape[2], -1)
         return col
 
+    def col2im(self, col):
+        N = col.shape[0]
+        C, H, W = self.input_shape
+        FN, OH, OW = self.output_shape
+        PH, PW = self.PH, self.PW
+        col = col.reshape(N, OH, OW, C, PH, PW).transpose(0, 3, 4, 5, 1, 2)
+
+        im = np.zeros((N, C, H, W))
+        for y in range(PH):
+            y_max = y + self.stride * OH
+            for x in range(PW):
+                x_max = x + self.stride * OW
+                im[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
+
+        return im
+
     def forward(self, X):
         N = X.shape[0]
         col = self.im2col(X).reshape(-1, self.PH * self.PW)
@@ -118,21 +147,16 @@ class MaxPooling:
         return out
 
     def backward(self, grad, lr):
-        # including implementation of column to image
         N = grad.shape[0]
-        grad = grad.reshape(N, self.output_shape[0], -1)
-        im = np.zeros((N, *self.input_shape))
-        col_grad = np.zeros((N, self.output_shape[0], self.output_shape[1]*self.output_shape[2], self.PH * self.PW))
-        for i in range(N):
-            for j in range(self.max_arg.shape[2]):
-                col_grad[i, :, j, self.max_arg[i, :, j]] = grad[i, :, j]
-        col_grad = col_grad.reshape(N, self.output_shape[0], self.output_shape[1]*self.output_shape[2], self.PH, self.PW)
-        idx = 0
-        for i in range(0, self.input_shape[1], self.PH):
-            for j in range(0, self.input_shape[2], self.PW):
-                im[:, :, i:i+self.PH, j:j+self.PW] = col_grad[:, :, idx]
-                idx += 1
-        return im
+        C, OH, OW = self.output_shape
+        grad = grad.reshape(N, C, OH, OW)
+        pool_size = self.PH * self.PW
+        dmax = np.zeros((grad.size, pool_size))
+        dmax[np.arange(self.max_arg.size), self.max_arg.flatten()] = grad.flatten()
+        dmax = dmax.reshape(grad.shape + (pool_size,))
+        dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1], dmax.shape[2], -1)
+        dx = self.col2im(dcol)
+        return dx
 
 
 class FullyConnectedLayer:
@@ -146,10 +170,11 @@ class FullyConnectedLayer:
         self.X = None
         self.Z = None
 
-    def set_parameters(self, input_shape, bound):
+    def set_parameters(self, input_shape):
         self.input_shape = input_shape
-        self.w = np.random.uniform(-bound, bound, (self.input_shape[1]*self.input_shape[2], self.output_shape[1]))
-        self.b = np.random.uniform(-bound, bound, (1, self.output_shape[1]))
+        range = (6 / (np.prod(self.input_shape) * np.prod(self.output_shape))) ** 0.5
+        self.w = np.random.uniform(low=-range, high=range, size=(np.prod(self.input_shape), self.output_shape[1]))
+        self.b = np.random.uniform(low=-range, high=range, size=(1, self.output_shape[1]))
         return self.output_shape
 
     def sigma(self, X):
@@ -160,9 +185,10 @@ class FullyConnectedLayer:
         return 1 / (1 + np.exp(-z))
 
     def softmax(self, z):
+        z = np.nan_to_num(z, nan=0.0, posinf=1e7, neginf=1e7)
         z_normalized = z - np.max(z, axis=1, keepdims=True)
-        self.softmax_sum = np.sum(np.exp(z_normalized), axis=1)
-        return np.exp(z_normalized) / self.softmax_sum[:, np.newaxis]
+        self.softmax_sum = np.sum(np.exp(z_normalized), axis=1, keepdims=True)
+        return np.exp(z_normalized) / self.softmax_sum
 
     def forward(self, X):
         N = X.shape[0]
@@ -176,18 +202,19 @@ class FullyConnectedLayer:
             return self.sigmoid(self.Z)
 
     def backward(self, grad, lr):
+        N = grad.shape[0]
         if self.activation == 'softmax':
-            self.Z -= np.max(self.Z, axis=1, keepdims=True)
-            dL_dZ = np.exp(self.Z) * grad * (1/self.softmax_sum)[:, np.newaxis]
-            dL_dw = np.dot(self.X.T, dL_dZ)
-            dL_dX = np.dot(dL_dZ, self.w.T)
-            self.w -= lr * dL_dw
-            self.b -= lr * np.average(dL_dZ, axis=0)
-            return dL_dX
+            dL_dZ = grad - np.sum(grad*self.softmax(self.Z), axis=1, keepdims=True)
         elif self.activation == 'sigmoid':
             pass
         else:   # activation = None
-            pass
+            dL_dZ = grad
+        dL_dw = np.dot(self.X.T, dL_dZ)
+        dL_dX = np.dot(dL_dZ, self.w.T).reshape(-1, *self.input_shape)
+        dL_db = np.sum(dL_dZ, axis=0, keepdims=True)
+        self.w -= lr * dL_dw / N
+        self.b -= lr * dL_db / N
+        return dL_dX
 
 
 class SimpleCNN:
@@ -202,11 +229,11 @@ class SimpleCNN:
             self.layers.append(model)
 
     def set_parameters(self, input_shape=(1, 28, 28), output_shape=(1, 10)):
-        bound = (6 / (input_shape[0] * input_shape[1] + output_shape[1])) ** 0.5        # Glorot initialization
+        # bound = (6 / (input_shape[0] * input_shape[1] + output_shape[1])) ** 0.5        # Glorot initialization
         self.input_shape = input_shape
         self.output_shape = output_shape
         for layer in self.layers:
-            output_shape = layer.set_parameters(input_shape, bound)
+            output_shape = layer.set_parameters(input_shape)
             input_shape = output_shape
 
     @staticmethod
@@ -232,7 +259,8 @@ class SimpleCNN:
 
     def predict(self, X, one_hot_encoding=True):
         N = X.shape[0]
-        idx = np.argmax(self.forward(X), axis=1)
+        result = self.forward(X)
+        idx = np.argmax(result, axis=1)
         if one_hot_encoding:
             pred = np.zeros((N, self.output_shape[1]))
             for i in range(N):
@@ -260,12 +288,9 @@ class SimpleCNN:
             print()
 
     def score(self, X, Y):
-        X_predict = self.predict(X)
-        result = 0
-        for pred, ans in zip(X_predict, Y):
-            if np.argmax(pred) == np.argmax(ans):
-                result += 1
-        return result / len(X)
+        pred = self.predict(X, one_hot_encoding=False)
+        true_labels = np.argmax(Y, axis=1)
+        return np.mean(pred == true_labels)
 
     def precision_score(self):
         pass
