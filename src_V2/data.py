@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-def load_data(path, normalize=True, one_hot_encoding=True):
+def load_data(path, one_hot_encoding=True):
     image_source = {
         "train_image": "train-images.idx3-ubyte",
         "test_image": "t10k-images.idx3-ubyte",
@@ -13,8 +13,7 @@ def load_data(path, normalize=True, one_hot_encoding=True):
     MNIST_data = {}
     for key in image_source:
         with open(os.path.join(os.path.dirname(__file__), '..', path, image_source[key]), 'rb') as f:
-            MNIST_data[key] = np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 1, 28, 28)
-        if normalize: MNIST_data[key] = MNIST_data[key] / 255
+            MNIST_data[key] = np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 1, 28, 28) / 255
     for key in label_source:
         with open(os.path.join(os.path.dirname(__file__), '..', path, label_source[key]), 'rb') as f:
             MNIST_data[key] = np.frombuffer(f.read(), np.uint8, offset=8)

@@ -154,8 +154,10 @@ class MaxPooling:
         dmax = np.zeros((grad.size, pool_size))
         dmax[np.arange(self.max_arg.size), self.max_arg.flatten()] = grad.flatten()
         dmax = dmax.reshape(grad.shape + (pool_size,))
+        print('dmax', dmax.shape)
         dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1], dmax.shape[2], -1)
         dx = self.col2im(dcol)
+        print(dcol.shape, dx.shape)
         return dx
 
 
