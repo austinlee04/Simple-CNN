@@ -58,7 +58,7 @@ class Convolution(CNN):
         FN, _, FH, FW = self.filter_shape
         self.output_shape = (FN, (H+2*self.padding-FH)//self.stride+1, (W+2*self.padding-FW)//self.stride+1)
         # He initialization
-        self.w = np.random.normal(loc=0, scale=2/np.prod(self.input_shape), size=(FN, C, FH, FW))
+        self.w = np.random.normal(loc=0, scale=2/(np.prod(self.input_shape)**0.5), size=(FN, C, FH, FW))
         return self.output_shape
 
     @staticmethod
@@ -207,7 +207,7 @@ class Model:
         true_labels = np.argmax(Y, axis=1)
         return np.mean(result == true_labels)
 
-    def fit(self, X_train, y_train, X_test, y_test, epochs=500, batch_size=100, learning_rate=0.01, early_stopping=False):
+    def fit(self, X_train, y_train, X_test, y_test, epochs=500, batch_size=100, learning_rate=0.001, early_stopping=False):
         self.learning_rate = learning_rate
         for epoch in range(1, epochs+1):
             loss = 0
